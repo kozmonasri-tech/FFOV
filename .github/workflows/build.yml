@@ -1,0 +1,459 @@
+name: Build FFOV APK
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'zulu'
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: 8.5
+    - name: Generate project files
+      run: |
+        mkdir -p app/src/main/java/com/dj/ffov
+        mkdir -p app/src/main/res/xml
+        mkdir -p app/src/main/res/values
+
+        cat > settings.gradle.kts << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "ffov"
+        include(":app")
+        EOF
+
+        cat > build.gradle.kts << 'EOF'
+        plugins {
+            id("com.android.application") version "8.2.0" apply false
+            id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+        }
+        EOF
+
+        cat > gradle.properties << 'EOF'
+        org.gradle.jvmargs=-Xmx2048m
+        android.useAndroidX=false
+        android.nonTransitiveRClass=true
+        EOF
+
+        cat > app/build.gradle.kts << 'EOF'
+        plugins {
+            id("com.android.application")
+            id("org.jetbrains.kotlin.android")
+        }
+        android {
+            namespace = "com.dj.ffov"
+            compileSdk = 34
+            defaultConfig {
+                applicationId = "com.dj.ffov"
+                minSdk = 29
+                targetSdk = 34
+                versionCode = 1
+                versionName = "1.0"
+            }
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            kotlinOptions { jvmTarget = "17" }
+        }
+        EOF
+
+        cat > app/src/main/res/xml/accessibility_config.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+            android:accessibilityEventTypes="typeWindowStateChanged"
+            android:accessibilityFeedbackType="feedbackGeneric"
+            android:canPerformGestures="true"
+            android:notificationTimeout="50"/>
+        EOF
+
+        cat > app/src/main/AndroidManifest.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+            <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+            <application
+                android:allowBackup="false"
+                android:label="FFOV"
+                android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                <activity android:name=".MainActivity" android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN"/>
+                        <category android:name="android.intent.category.LAUNCHER"/>
+                    </intent-filter>
+                </activity>
+
+                <service
+                    android:name=".CapService"
+                    android:foregroundServiceType="mediaProjection"
+                    android:exported="false"/>
+
+                <service
+                    android:name=".AimService"
+                    android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.accessibilityservice.AccessibilityService"/>
+                    </intent-filter>
+                    <meta-data
+                        android:name="android.accessibilityservice"
+                        android:resource="@xml/accessibility_config"/>
+                </service>
+            </application>
+        </manifest>
+        EOF
+
+        cat > app/src/main/java/com/dj/ffov/MainActivity.kt << 'EOF'
+        package com.dj.ffov
+
+        import android.accessibilityservice.AccessibilityService
+        import android.accessibilityservice.GestureDescription
+        import android.app.Activity
+        import android.app.Notification
+        import android.app.NotificationChannel
+        import android.app.NotificationManager
+        import android.app.Service
+        import android.content.Context
+        import android.content.Intent
+        import android.graphics.Bitmap
+        import android.graphics.Canvas
+        import android.graphics.Color
+        import android.graphics.Paint
+        import android.graphics.Path
+        import android.graphics.PixelFormat
+        import android.hardware.display.DisplayManager
+        import android.hardware.display.VirtualDisplay
+        import android.media.Image
+        import android.media.ImageReader
+        import android.media.projection.MediaProjection
+        import android.media.projection.MediaProjectionManager
+        import android.net.Uri
+        import android.os.Bundle
+        import android.os.IBinder
+        import android.provider.Settings
+        import android.util.DisplayMetrics
+        import android.view.Gravity
+        import android.view.View
+        import android.view.WindowManager
+        import android.view.accessibility.AccessibilityEvent
+        import android.widget.Button
+        import android.widget.LinearLayout
+        import android.widget.TextView
+        import kotlin.math.abs
+
+        object AimState {
+            @Volatile var targets: List<IntArray> = emptyList()
+            @Volatile var screenW = 0
+            @Volatile var screenH = 0
+            @Volatile var instance: AimService? = null
+            @Volatile var headRatio = 0.18f
+            @Volatile var fov = 500f
+        }
+
+        class MainActivity : Activity() {
+            private val REQ = 11
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                val root = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(70, 280, 70, 70)
+                }
+                root.addView(TextView(this).apply {
+                    text = "1) اسمح بالطبقة\n2) ابدأ الالتقاط\n3) فعّل Aim من إعدادات الوصول\n4) افتح فري فاير"
+                    textSize = 17f
+                    setPadding(0, 0, 0, 50)
+                })
+                root.addView(Button(this).apply {
+                    text = "1. Enable Overlay"
+                    setOnClickListener {
+                        if (!Settings.canDrawOverlays(this@MainActivity)) {
+                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                        }
+                    }
+                })
+                root.addView(Button(this).apply {
+                    text = "2. Start Capture"
+                    setOnClickListener {
+                        val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        startActivityForResult(pm.createScreenCaptureIntent(), REQ)
+                    }
+                })
+                root.addView(Button(this).apply {
+                    text = "3. Accessibility Settings"
+                    setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                })
+                root.addView(Button(this).apply {
+                    text = "4. Stop"
+                    setOnClickListener { stopService(Intent(this, CapService::class.java)) }
+                })
+                setContentView(root)
+            }
+
+            override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                super.onActivityResult(requestCode, resultCode, data)
+                if (requestCode == REQ && resultCode == RESULT_OK && data != null) {
+                    val i = Intent(this, CapService::class.java).apply {
+                        putExtra("code", resultCode)
+                        putExtra("data", data)
+                    }
+                    startForegroundService(i)
+                }
+            }
+        }
+
+        class AimService : AccessibilityService() {
+            override fun onServiceConnected() { AimState.instance = this }
+            override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+            override fun onInterrupt() {}
+            fun flick() {
+                val list = AimState.targets
+                if (list.isEmpty()) return
+                val cx = AimState.screenW / 2f
+                val cy = AimState.screenH / 2f
+                var best: IntArray? = null
+                var bestD = Float.MAX_VALUE
+                for (b in list) {
+                    val bx = b[0] + (b[2] - b[0]) / 2f
+                    val by = b[1] + (b[3] - b[1]) * AimState.headRatio
+                    val d = abs(bx - cx) + abs(by - cy)
+                    if (d < bestD) { bestD = d; best = b }
+                }
+                val b = best ?: return
+                val tx = b[0] + (b[2] - b[0]) / 2f
+                val ty = b[1] + (b[3] - b[1]) * AimState.headRatio
+                if (abs(tx - cx) > AimState.fov || abs(ty - cy) > AimState.fov) return
+                val path = Path().apply { moveTo(cx, cy); lineTo(tx, ty) }
+                val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 55)).build()
+                dispatchGesture(g, null, null)
+            }
+        }
+
+        class CapService : Service() {
+            private var proj: MediaProjection? = null
+            private var vd: VirtualDisplay? = null
+            private var reader: ImageReader? = null
+            private var overlay: OV? = null
+            private var fab: Button? = null
+            private var wm: WindowManager? = null
+            @Volatile private var busy = false
+
+            override fun onBind(i: Intent?): IBinder? = null
+
+            override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                startForeground(1, notif())
+                val code = intent?.getIntExtra("code", 0) ?: return START_NOT_STICKY
+                val data = intent.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
+
+                val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                proj = pm.getMediaProjection(code, data)
+
+                val m = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(m)
+                val w = m.widthPixels
+                val h = m.heightPixels
+                AimState.screenW = w
+                AimState.screenH = h
+
+                reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+                vd = proj?.createVirtualDisplay("cap", w, h, m.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, null)
+                
+                reader!!.setOnImageAvailableListener({ r ->
+                    if (busy) { r.acquireLatestImage()?.close(); return@setOnImageAvailableListener }
+                    val img = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    busy = true
+                    try {
+                        val bmp = toBitmap(img, w, h)
+                        val found = scanRed(bmp)
+                        AimState.targets = found
+                        overlay?.update(found)
+                    } finally {
+                        img.close()
+                        busy = false
+                    }
+                }, null)
+                attach()
+                return START_STICKY
+            }
+
+            private fun scanRed(bmp: Bitmap): List<IntArray> {
+                val step = 4
+                val W = bmp.width
+                val H = bmp.height
+                val px = IntArray(W * H)
+                bmp.getPixels(px, 0, W, 0, 0, W, H)
+                val seen = BooleanArray(W * H)
+                val out = mutableListOf<IntArray>()
+
+                for (y in 0 until H step step) {
+                    for (x in 0 until W step step) {
+                        val idx = y * W + x
+                        if (seen[idx]) continue
+                        val c = px[idx]
+                        val r = (c shr 16) and 0xFF
+                        val g = (c shr 8) and 0xFF
+                        val b = c and 0xFF
+                        if (r > 150 && g < 100 && b < 100 && r > g + 60 && r > b + 60) {
+                            val bb = flood(px, seen, W, H, x, y, step) ?: continue
+                            val bw = bb[2] - bb[0]
+                            val bh = bb[3] - bb[1]
+                            if (bw in 20..800 && bh in 8..150) out.add(bb)
+                        }
+                    }
+                }
+                return out
+            }
+
+            private fun flood(px: IntArray, seen: BooleanArray, W: Int, H: Int, sx: Int, sy: Int, step: Int): IntArray? {
+                var minX = sx; var maxX = sx; var minY = sy; var maxY = sy; var cnt = 0
+                val st = ArrayDeque<Int>()
+                st.addLast(sy * W + sx)
+                while (st.isNotEmpty()) {
+                    val idx = st.removeLast()
+                    if (seen[idx]) continue
+                    seen[idx] = true
+                    val y = idx / W
+                    val x = idx % W
+                    val c = px[idx]
+                    val r = (c shr 16) and 0xFF
+                    val g = (c shr 8) and 0xFF
+                    val b = c and 0xFF
+                    if (!(r > 150 && g < 100 && b < 100 && r > g + 60 && r > b + 60)) continue
+                    cnt++
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                    if (x - step >= 0) st.addLast(idx - step)
+                    if (x + step < W) st.addLast(idx + step)
+                    if (y - step >= 0) st.addLast(idx - W * step)
+                    if (y + step < H) st.addLast(idx + W * step)
+                }
+                if (cnt < 25) return null
+                return intArrayOf(minX, minY, maxX, maxY)
+            }
+
+            private fun toBitmap(img: Image, w: Int, h: Int): Bitmap {
+                val p = img.planes[0]
+                val buf = p.buffer
+                val ps = p.pixelStride
+                val rs = p.rowStride
+                val pad = rs - ps * w
+                val bmp = Bitmap.createBitmap(w + pad / ps, h, Bitmap.Config.ARGB_8888)
+                bmp.copyPixelsFromBuffer(buf)
+                return Bitmap.createBitmap(bmp, 0, 0, w, h)
+            }
+
+            private fun attach() {
+                if (!Settings.canDrawOverlays(this)) return
+                wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                overlay = OV(this)
+                val p = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                )
+                wm?.addView(overlay, p)
+
+                fab = Button(this).apply {
+                    text = "AIM"
+                    textSize = 12f
+                    setOnClickListener { AimState.instance?.flick() }
+                }
+                val fp = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    x = 20
+                }
+                wm?.addView(fab, fp)
+            }
+
+            private fun notif(): Notification {
+                val ch = NotificationChannel("cap", "Capture", NotificationManager.IMPORTANCE_LOW)
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+                return Notification.Builder(this, "cap")
+                    .setContentTitle("FFOV يعمل")
+                    .setSmallIcon(android.R.drawable.ic_menu_view)
+                    .build()
+            }
+
+            override fun onDestroy() {
+                vd?.release(); reader?.close(); proj?.stop()
+                overlay?.let { wm?.removeView(it) }
+                fab?.let { wm?.removeView(it) }
+                super.onDestroy()
+            }
+        }
+
+        class OV(ctx: Context) : View(ctx) {
+            @Volatile private var boxes: List<IntArray> = emptyList()
+            private val paint = Paint().apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 4f
+                color = Color.rgb(0, 255, 120)
+            }
+            private val head = Paint().apply {
+                style = Paint.Style.FILL
+                color = Color.rgb(255, 60, 60)
+            }
+
+            fun update(b: List<IntArray>) {
+                boxes = b
+                postInvalidate()
+            }
+
+            override fun onDraw(c: Canvas) {
+                super.onDraw(c)
+                for (b in boxes) {
+                    c.drawRect(b[0].toFloat(), b[1].toFloat(), b[2].toFloat(), b[3].toFloat(), paint)
+                    val bw = (b[2] - b[0]).toFloat()
+                    val hx = b[0] + bw / 2f
+                    val hy = b[1] + (b[3] - b[1]) * AimState.headRatio
+                    c.drawCircle(hx, hy, 6f, head)
+                }
+            }
+        }
+        EOF
+
+    - name: Build APK with Gradle
+      run: gradle assembleDebug --no-daemon
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: FFOV-APK
+        path: app/build/outputs/apk/debug/app-debug.apk
+        
