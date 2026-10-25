@@ -14,20 +14,18 @@ jobs:
       with:
         java-version: '17'
         distribution: 'zulu'
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: 8.5
     - name: Generate project files
       run: |
-        mkdir -p app/src/main/java/com/dj/ffov
-        mkdir -p app/src/main/res/xml
-        mkdir -p app/src/main/res/values
+        python3 - << 'PYEOF'
+        import os
+        os.makedirs("app/src/main/java/com/dj/ffov", exist_ok=True)
+        os.makedirs("app/src/main/res/xml", exist_ok=True)
 
-        cat > settings.gradle.kts << 'EOF'
-        pluginManagement {
+        open("settings.gradle.kts", "w").write("""pluginManagement {
             repositories {
                 google()
                 mavenCentral()
@@ -42,23 +40,20 @@ jobs:
         }
         rootProject.name = "ffov"
         include(":app")
-        EOF
+        """)
 
-        cat > build.gradle.kts << 'EOF'
-        plugins {
+        open("build.gradle.kts", "w").write("""plugins {
             id("com.android.application") version "8.2.0" apply false
             id("org.jetbrains.kotlin.android") version "1.9.20" apply false
         }
-        EOF
+        """)
 
-        cat > gradle.properties << 'EOF'
-        org.gradle.jvmargs=-Xmx2048m
+        open("gradle.properties", "w").write("""org.gradle.jvmargs=-Xmx2048m
         android.useAndroidX=false
         android.nonTransitiveRClass=true
-        EOF
+        """)
 
-        cat > app/build.gradle.kts << 'EOF'
-        plugins {
+        open("app/build.gradle.kts", "w").write("""plugins {
             id("com.android.application")
             id("org.jetbrains.kotlin.android")
         }
@@ -78,19 +73,17 @@ jobs:
             }
             kotlinOptions { jvmTarget = "17" }
         }
-        EOF
+        """)
 
-        cat > app/src/main/res/xml/accessibility_config.xml << 'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
+        open("app/src/main/res/xml/accessibility_config.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
         <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
             android:accessibilityEventTypes="typeWindowStateChanged"
             android:accessibilityFeedbackType="feedbackGeneric"
             android:canPerformGestures="true"
             android:notificationTimeout="50"/>
-        EOF
+        """)
 
-        cat > app/src/main/AndroidManifest.xml << 'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
+        open("app/src/main/AndroidManifest.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -127,10 +120,9 @@ jobs:
                 </service>
             </application>
         </manifest>
-        EOF
+        """)
 
-        cat > app/src/main/java/com/dj/ffov/MainActivity.kt << 'EOF'
-        package com.dj.ffov
+        open("app/src/main/java/com/dj/ffov/MainActivity.kt", "w").write("""package com.dj.ffov
 
         import android.accessibilityservice.AccessibilityService
         import android.accessibilityservice.GestureDescription
@@ -185,7 +177,7 @@ jobs:
                     setPadding(70, 280, 70, 70)
                 }
                 root.addView(TextView(this).apply {
-                    text = "1) اسمح بالطبقة\n2) ابدأ الالتقاط\n3) فعّل Aim من إعدادات الوصول\n4) افتح فري فاير"
+                    text = "1) اسمح بالطبقة\\n2) ابدأ الالتقاط\\n3) فعّل Aim من إعدادات الوصول\\n4) افتح فري فاير"
                     textSize = 17f
                     setPadding(0, 0, 0, 50)
                 })
@@ -193,7 +185,7 @@ jobs:
                     text = "1. Enable Overlay"
                     setOnClickListener {
                         if (!Settings.canDrawOverlays(this@MainActivity)) {
-                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:\$packageName")))
                         }
                     }
                 })
@@ -446,8 +438,8 @@ jobs:
                 }
             }
         }
-        EOF
-
+        """)
+        PYEOF
     - name: Build APK with Gradle
       run: gradle assembleDebug --no-daemon
     
@@ -456,4 +448,3 @@ jobs:
       with:
         name: FFOV-APK
         path: app/build/outputs/apk/debug/app-debug.apk
-        
