@@ -170,7 +170,7 @@ jobs:
             @Volatile var screenH = 0
             @Volatile var instance: AimService? = null
             @Volatile var headRatio = 0.18f
-            @Volatile var fov = 500f
+            @Volatile var fov = 600f
         }
 
         class MainActivity : Activity() {
@@ -252,7 +252,7 @@ jobs:
                 val path = Path()
                 path.moveTo(cx, cy)
                 path.lineTo(tx, ty)
-                val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 55)).build()
+                val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 50)).build()
                 dispatchGesture(g, null, null)
             }
         }
@@ -327,11 +327,12 @@ jobs:
                         val r = (c shr 16) and 0xFF
                         val g = (c shr 8) and 0xFF
                         val b = c and 0xFF
-                        if (r > 150 && g < 100 && b < 100 && r > g + 60 && r > b + 60) {
+                        // نطاق لون أوسع بمراحل عشان يمسك أي درجة أحمر
+                        if (r > 110 && r > g + 35 && r > b + 35) {
                             val bb = flood(px, seen, W, H, x, y, step) ?: continue
                             val bw = bb[2] - bb[0]
                             val bh = bb[3] - bb[1]
-                            if (bw in 20..800 && bh in 8..150) out.add(bb)
+                            if (bw in 15..900 && bh in 5..200) out.add(bb)
                         }
                     }
                 }
@@ -352,7 +353,7 @@ jobs:
                     val r = (c shr 16) and 0xFF
                     val g = (c shr 8) and 0xFF
                     val b = c and 0xFF
-                    if (!(r > 150 && g < 100 && b < 100 && r > g + 60 && r > b + 60)) continue
+                    if (!(r > 110 && r > g + 35 && r > b + 35)) continue
                     cnt++
                     if (x < minX) minX = x
                     if (x > maxX) maxX = x
@@ -363,7 +364,7 @@ jobs:
                     if (y - step >= 0) st.addLast(idx - W * step)
                     if (y + step < H) st.addLast(idx + W * step)
                 }
-                if (cnt < 25) return null
+                if (cnt < 15) return null
                 return intArrayOf(minX, minY, maxX, maxY)
             }
 
@@ -393,18 +394,19 @@ jobs:
 
                 fab = Button(this)
                 fab!!.text = "AIM"
-                fab!!.textSize = 12f
+                fab!!.textSize = 20f
+                fab!!.setTextColor(Color.WHITE)
+                fab!!.setBackgroundColor(Color.RED)
                 fab!!.setOnClickListener { AimState.instance?.flick() }
                 
                 val fp = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    200, 200,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT
                 )
                 fp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                fp.x = 20
+                fp.x = 30
                 wm?.addView(fab, fp)
             }
 
@@ -429,12 +431,12 @@ jobs:
             @Volatile private var boxes: List<IntArray> = emptyList()
             private val paint = Paint().apply {
                 style = Paint.Style.STROKE
-                strokeWidth = 4f
-                color = Color.rgb(0, 255, 120)
+                strokeWidth = 8f // خط أعرض بكثير
+                color = Color.GREEN
             }
             private val head = Paint().apply {
                 style = Paint.Style.FILL
-                color = Color.rgb(255, 60, 60)
+                color = Color.RED
             }
 
             fun update(b: List<IntArray>) {
@@ -449,7 +451,7 @@ jobs:
                     val bw = (b[2] - b[0]).toFloat()
                     val hx = b[0] + bw / 2f
                     val hy = b[1] + (b[3] - b[1]) * AimState.headRatio
-                    c.drawCircle(hx, hy, 6f, head)
+                    c.drawCircle(hx, hy, 10f, head)
                 }
             }
         }
