@@ -20,12 +20,11 @@ jobs:
         gradle-version: 8.5
     - name: Generate project files
       run: |
-        python3 - << 'PYEOF'
-        import os
-        os.makedirs("app/src/main/java/com/dj/ffov", exist_ok=True)
-        os.makedirs("app/src/main/res/xml", exist_ok=True)
+        mkdir -p app/src/main/java/com/dj/ffov
+        mkdir -p app/src/main/res/xml
 
-        open("settings.gradle.kts", "w").write("""pluginManagement {
+        cat > settings.gradle.kts << 'EOF'
+        pluginManagement {
             repositories {
                 google()
                 mavenCentral()
@@ -40,20 +39,23 @@ jobs:
         }
         rootProject.name = "ffov"
         include(":app")
-        """)
+        EOF
 
-        open("build.gradle.kts", "w").write("""plugins {
+        cat > build.gradle.kts << 'EOF'
+        plugins {
             id("com.android.application") version "8.2.0" apply false
             id("org.jetbrains.kotlin.android") version "1.9.20" apply false
         }
-        """)
+        EOF
 
-        open("gradle.properties", "w").write("""org.gradle.jvmargs=-Xmx2048m
+        cat > gradle.properties << 'EOF'
+        org.gradle.jvmargs=-Xmx2048m
         android.useAndroidX=false
         android.nonTransitiveRClass=true
-        """)
+        EOF
 
-        open("app/build.gradle.kts", "w").write("""plugins {
+        cat > app/build.gradle.kts << 'EOF'
+        plugins {
             id("com.android.application")
             id("org.jetbrains.kotlin.android")
         }
@@ -73,17 +75,19 @@ jobs:
             }
             kotlinOptions { jvmTarget = "17" }
         }
-        """)
+        EOF
 
-        open("app/src/main/res/xml/accessibility_config.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
+        cat > app/src/main/res/xml/accessibility_config.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
         <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
             android:accessibilityEventTypes="typeWindowStateChanged"
             android:accessibilityFeedbackType="feedbackGeneric"
             android:canPerformGestures="true"
             android:notificationTimeout="50"/>
-        """)
+        EOF
 
-        open("app/src/main/AndroidManifest.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
+        cat > app/src/main/AndroidManifest.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -120,9 +124,10 @@ jobs:
                 </service>
             </application>
         </manifest>
-        """)
+        EOF
 
-        open("app/src/main/java/com/dj/ffov/MainActivity.kt", "w").write("""package com.dj.ffov
+        cat > app/src/main/java/com/dj/ffov/MainActivity.kt << 'EOF'
+        package com.dj.ffov
 
         import android.accessibilityservice.AccessibilityService
         import android.accessibilityservice.GestureDescription
@@ -172,48 +177,52 @@ jobs:
             private val REQ = 11
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
-                val root = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(70, 280, 70, 70)
+                val root = LinearLayout(this)
+                root.orientation = LinearLayout.VERTICAL
+                root.setPadding(70, 280, 70, 70)
+                
+                val tv = TextView(this)
+                tv.text = "1) اسمح بالطبقة\n2) ابدأ الالتقاط\n3) فعّل Aim من إعدادات الوصول\n4) افتح فري فاير"
+                tv.textSize = 17f
+                tv.setPadding(0, 0, 0, 50)
+                root.addView(tv)
+
+                val b1 = Button(this)
+                b1.text = "1. Enable Overlay"
+                b1.setOnClickListener {
+                    if (!Settings.canDrawOverlays(this@MainActivity)) {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName)))
+                    }
                 }
-                root.addView(TextView(this).apply {
-                    text = "1) اسمح بالطبقة\\n2) ابدأ الالتقاط\\n3) فعّل Aim من إعدادات الوصول\\n4) افتح فري فاير"
-                    textSize = 17f
-                    setPadding(0, 0, 0, 50)
-                })
-                root.addView(Button(this).apply {
-                    text = "1. Enable Overlay"
-                    setOnClickListener {
-                        if (!Settings.canDrawOverlays(this@MainActivity)) {
-                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:\$packageName")))
-                        }
-                    }
-                })
-                root.addView(Button(this).apply {
-                    text = "2. Start Capture"
-                    setOnClickListener {
-                        val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                        startActivityForResult(pm.createScreenCaptureIntent(), REQ)
-                    }
-                })
-                root.addView(Button(this).apply {
-                    text = "3. Accessibility Settings"
-                    setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                })
-                root.addView(Button(this).apply {
-                    text = "4. Stop"
-                    setOnClickListener { stopService(Intent(this, CapService::class.java)) }
-                })
+                root.addView(b1)
+
+                val b2 = Button(this)
+                b2.text = "2. Start Capture"
+                b2.setOnClickListener {
+                    val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    startActivityForResult(pm.createScreenCaptureIntent(), REQ)
+                }
+                root.addView(b2)
+
+                val b3 = Button(this)
+                b3.text = "3. Accessibility Settings"
+                b3.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                root.addView(b3)
+
+                val b4 = Button(this)
+                b4.text = "4. Stop"
+                b4.setOnClickListener { stopService(Intent(this, CapService::class.java)) }
+                root.addView(b4)
+
                 setContentView(root)
             }
 
             override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
                 super.onActivityResult(requestCode, resultCode, data)
                 if (requestCode == REQ && resultCode == RESULT_OK && data != null) {
-                    val i = Intent(this, CapService::class.java).apply {
-                        putExtra("code", resultCode)
-                        putExtra("data", data)
-                    }
+                    val i = Intent(this, CapService::class.java)
+                    i.putExtra("code", resultCode)
+                    i.putExtra("data", data)
                     startForegroundService(i)
                 }
             }
@@ -240,7 +249,9 @@ jobs:
                 val tx = b[0] + (b[2] - b[0]) / 2f
                 val ty = b[1] + (b[3] - b[1]) * AimState.headRatio
                 if (abs(tx - cx) > AimState.fov || abs(ty - cy) > AimState.fov) return
-                val path = Path().apply { moveTo(cx, cy); lineTo(tx, ty) }
+                val path = Path()
+                path.moveTo(cx, cy)
+                path.lineTo(tx, ty)
                 val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 55)).build()
                 dispatchGesture(g, null, null)
             }
@@ -277,17 +288,22 @@ jobs:
                 vd = proj?.createVirtualDisplay("cap", w, h, m.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, null)
                 
                 reader!!.setOnImageAvailableListener({ r ->
-                    if (busy) { r.acquireLatestImage()?.close(); return@setOnImageAvailableListener }
-                    val img = r.acquireLatestImage() ?: return@setOnImageAvailableListener
-                    busy = true
-                    try {
-                        val bmp = toBitmap(img, w, h)
-                        val found = scanRed(bmp)
-                        AimState.targets = found
-                        overlay?.update(found)
-                    } finally {
-                        img.close()
-                        busy = false
+                    if (!busy) {
+                        val img = r.acquireLatestImage()
+                        if (img != null) {
+                            busy = true
+                            try {
+                                val bmp = toBitmap(img, w, h)
+                                val found = scanRed(bmp)
+                                AimState.targets = found
+                                overlay?.update(found)
+                            } finally {
+                                img.close()
+                                busy = false
+                            }
+                        }
+                    } else {
+                        r.acquireLatestImage()?.close()
                     }
                 }, null)
                 attach()
@@ -375,21 +391,20 @@ jobs:
                 )
                 wm?.addView(overlay, p)
 
-                fab = Button(this).apply {
-                    text = "AIM"
-                    textSize = 12f
-                    setOnClickListener { AimState.instance?.flick() }
-                }
+                fab = Button(this)
+                fab!!.text = "AIM"
+                fab!!.textSize = 12f
+                fab!!.setOnClickListener { AimState.instance?.flick() }
+                
                 val fp = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                    x = 20
-                }
+                )
+                fp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                fp.x = 20
                 wm?.addView(fab, fp)
             }
 
@@ -438,8 +453,7 @@ jobs:
                 }
             }
         }
-        """)
-        PYEOF
+        EOF
     - name: Build APK with Gradle
       run: gradle assembleDebug --no-daemon
     
